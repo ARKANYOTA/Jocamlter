@@ -1,3 +1,10 @@
 
 a.tmp
 tempy
+hello.ml
+Ancien/*
+__MACOSX/*
+.ipynb_checkpoints/*
+.idea/*
+*.pyc
+

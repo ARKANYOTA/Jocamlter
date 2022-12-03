@@ -2,6 +2,7 @@ import subprocess
 import threading
 import socket
 
+
 p = subprocess.Popen(["ocaml"], stderr=subprocess.PIPE,shell=False, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 exit = False
 
@@ -17,20 +18,21 @@ def read_stderro():
         print("stderr: ", msg.decode())
         exit = True
 
-threading.Thread(target=read_stdout).start()
-threading.Thread(target=read_stderro).start()
+readout = threading.Thread(target=read_stdout)
+readout.start()
+
+readerr = threading.Thread(target=read_stderro)
+readerr.start()
+
 
 while not exit:
     res = input(">")
     p.stdin.write((res + '\n').encode())
     p.stdin.flush()
 
-p.stdin.close()
-p.stdout.close()
-p.wait()
 exit = True
-p.terminate()
-p.wait()
+readout.join()
+readerr.join()
 
 
     # with subprocess.Popen(script, stdin=PIPE, stdout=f, stderr=f) as fproc:
