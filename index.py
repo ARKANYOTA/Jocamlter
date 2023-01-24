@@ -1,20 +1,29 @@
 import logging
 import os
 import subprocess
+import sys
 import threading
-import logging
 import time
 from typing import Iterable
-from src.constants import Constants, Raw, Nonblocking
-import sys
-from select import select
-from pygments.formatters.terminal import TerminalFormatter
-from pygments.lexers.python import PythonLexer
-from pygments.lexers.ml import OcamlLexer
-from pygments import highlight
 
-p = subprocess.Popen(["ocaml"], stderr=subprocess.PIPE, shell=False, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-logging.basicConfig(filename='debug.log', encoding='utf-8', level=logging.DEBUG)
+from pygments import highlight
+from pygments.formatters.terminal import TerminalFormatter
+from pygments.lexers.ml import OcamlLexer
+from select import select
+
+from src.constants import Constants, Raw, Nonblocking
+
+
+class OPTIONS:
+    mouse_active = True
+    program = "ocaml"
+    # program = "python3"
+    Lexer = OcamlLexer
+
+
+p = subprocess.Popen([OPTIONS.program], stderr=subprocess.PIPE, shell=False, stdin=subprocess.PIPE,
+                     stdout=subprocess.PIPE)
+logging.basicConfig(filename='debug.log', encoding='utf-8', level=logging.ERROR)
 
 
 # TODO:
@@ -102,19 +111,15 @@ class Keyboard(threading.Thread):
                     case "f4":
                         GLOBALS.Cells[GLOBALS.cell_selected].execute()
                         GLOBALS.screen_need_to_be_refresh = True
-                    case "f2":
-                        print("-----------")
-                        res = "1+1;;"
-                        p.stdin.write((res + '\n').encode())
-                        p.stdin.flush()
-                        time.sleep(0.1)
-                        print("----------")
                     case char if len(char) == 1:
                         if GLOBALS.cell_selected != -1:
                             GLOBALS.Cells[GLOBALS.cell_selected].add_char(char)
                             GLOBALS.screen_need_to_be_refresh = True
                     case "enter":
-                        GLOBALS.Cells[GLOBALS.cell_selected].add_line()
+                        if GLOBALS.Cells[GLOBALS.cell_selected].is_in_or_out == "in":
+                            GLOBALS.Cells[GLOBALS.cell_selected].add_line()
+                        else:
+                            GLOBALS.Cells[GLOBALS.cell_selected].goto_next_cell()
                     case "backspace":
                         if GLOBALS.cell_selected != -1:
                             GLOBALS.Cells[GLOBALS.cell_selected].delete_char()
@@ -137,7 +142,8 @@ class Draw:
         # Move cursor to the excepted position
         if GLOBALS.cell_selected != -1 and GLOBALS.Cells[GLOBALS.cell_selected].is_in_or_out == "in":
             x, y = GLOBALS.Cells[GLOBALS.cell_selected].get_position_of_box()
-            sys.stdout.write(f"\033[{GLOBALS.Cells[GLOBALS.cell_selected].cursor_y+y+1};{GLOBALS.Cells[GLOBALS.cell_selected].cursor_x+x+1}H")
+            sys.stdout.write(
+                f"\033[{GLOBALS.Cells[GLOBALS.cell_selected].cursor_y + y + 1};{GLOBALS.Cells[GLOBALS.cell_selected].cursor_x + x + 1}H")
         else:
             sys.stdout.write(f"\033[{20};{20}H")
         sys.stdout.flush()
@@ -161,10 +167,8 @@ class Draw:
     def draw_menu_bar(cls):
         fill = " " * (GLOBALS.screen_width - 2)
         print(f"\033[{GLOBALS.screen_height};1H\033[;44m" + fill + "\033[0m", end="")
-        print(f"\033[{GLOBALS.screen_height};1H\033[33;44mFile\033[0m", end="")
-        print(f"\033[{GLOBALS.screen_height};6H\033[33;44mEdit\033[0m", end="")
-        print(f"\033[{GLOBALS.screen_height};11H\033[33;44mView\033[0m", end="")
-        print(f"\033[{GLOBALS.screen_height};16H\033[33;44mHelp\033[0m", end="")
+        print(f"\033[{GLOBALS.screen_height};1H\033[33;44mS Save File\033[0m", end="")
+        print(f"\033[{GLOBALS.screen_height};13H\033[33;44mN New File (Erase other file)\033[0m", end="")
         print("\033[1;1H")
 
         pass
@@ -206,10 +210,6 @@ class Draw:
             cls.draw_pixel("│", x2, y, x_top, y_top, color, background_color)
 
 
-class OPTIONS:
-    mouse_active = True
-
-
 class Cell:
     def __init__(self, is_in_or_out, id, nb_exec, has_error=False):
         self.is_in_or_out = is_in_or_out
@@ -233,11 +233,14 @@ class Cell:
                       background_color=backcolor)
 
         if self.is_in_or_out != "out":
-            Draw.draw_pixel(f"{self.is_in_or_out.capitalize():>3}[{self.nb_exec}]:", 2, ligne + 1)
+            if GLOBALS.await_code_in_cell == self.id:
+                Draw.draw_pixel(f"{self.is_in_or_out.capitalize():>3}[*]:", 2, ligne + 1)
+            else:
+                Draw.draw_pixel(f"{self.is_in_or_out.capitalize():>3}[{self.nb_exec}]:", 2, ligne + 1)
 
-        code = highlight(code="\n".join(self.lines), formatter=TerminalFormatter(), lexer=OcamlLexer())
+        code = highlight(code="\n".join(self.lines), formatter=TerminalFormatter(), lexer=OPTIONS.Lexer())
         for i, line in enumerate(code.split("\n")):
-             #mltohtml.parse("\n".join(self.lines)).split("\n")
+            # mltohtml.parse("\n".join(self.lines)).split("\n")
             Draw.draw_pixel(line, 11, ligne + 1 + i)
 
     def move_cursor(self, direction):
@@ -267,7 +270,7 @@ class Cell:
         if GLOBALS.Cells[GLOBALS.cell_selected].is_in_or_out == "out":
             return
         GLOBALS.Cells[GLOBALS.cell_selected].lines[self.cursor_y] += char
-        GLOBALS.Cells[GLOBALS.cell_selected].cursor_x +=1
+        GLOBALS.Cells[GLOBALS.cell_selected].cursor_x += 1
 
     def delete_char(self):  # TOFIX supprime tout ce qu'il y a apres le cursor x
         if GLOBALS.Cells[GLOBALS.cell_selected].is_in_or_out == "out":
@@ -288,13 +291,11 @@ class Cell:
         GLOBALS.Cells[GLOBALS.cell_selected].move_cursor("down")
         GLOBALS.screen_need_to_be_refresh = True
 
-
     def get_position_of_box(self):
         line = 0
         for i in range(self.id):
             line += len(GLOBALS.Cells[i].lines) + 3
-            logging.debug(f"line: {line}")
-        return 11, 3+line
+        return 11, 3 + line
 
     def execute(self):
         if self.is_in_or_out == "out":
@@ -302,34 +303,47 @@ class Cell:
         nb_exec = self.nb_exec
         self.nb_exec = "*"
         code = "\n".join(GLOBALS.Cells[GLOBALS.cell_selected].lines)
-        p.stdin.write((code + "\n").encode())
-        p.stdin.flush()
+        if len(GLOBALS.Cells) != GLOBALS.cell_selected+1:
+            GLOBALS.Cells[GLOBALS.cell_selected+1].lines = [""]  # clear the cell
+        GLOBALS.await_code_in_cell = GLOBALS.cell_selected
+        OCAMLSTD.send(code)
         self.nb_exec = nb_exec + 1
 
+    def code_in(self, code):
+        if self.is_in_or_out != "in":
+            return
+        if len(GLOBALS.Cells) == GLOBALS.await_code_in_cell + 1:
+            GLOBALS.Cells.append(Cell("out", GLOBALS.await_code_in_cell + 1, 0))
+        GLOBALS.Cells[GLOBALS.await_code_in_cell + 1].lines.extend(code.split("\n"))
+        GLOBALS.cell_selected = GLOBALS.await_code_in_cell + 1
+        GLOBALS.Cells[GLOBALS.cell_selected].goto_next_cell()
+        GLOBALS.screen_need_to_be_refresh = True  # TOFIX Savoir le temps du dt
 
+    def goto_next_cell(self):
+        if len(GLOBALS.Cells) == GLOBALS.cell_selected+1:
+            if self.is_in_or_out == "out":
+                GLOBALS.Cells.append(Cell("in", GLOBALS.cell_selected + 1, 0))
+            else:
+                GLOBALS.Cells.append(Cell("out", GLOBALS.cell_selected + 1, 0))
+        GLOBALS.cell_selected += 1
+        GLOBALS.screen_need_to_be_refresh = True
 
 
 class GLOBALS:
     exit_program = False
     screen_need_to_be_refresh = True
+    refresh_dt = 0
     screen_width, screen_height = os.get_terminal_size()[0], os.get_terminal_size()[1]
 
     # Cells id start at 0
     Cells: list[Cell] = [
-        Cell("in" , 0, 0),
-        Cell("out", 1, 0),
-        Cell("in" , 2, 0),
-        Cell("out", 3, 0, True),
-        Cell("out", 4, 0, True),
-        Cell("out", 5, 0, True),
-        Cell("out", 6, 0, True),
-        Cell("out", 7, 0, True),
-        Cell("in", 8, 0)
+        Cell("in", 0, 0),
     ]
 
     scroll_bar_pos = 0
 
     cell_selected = 0  # If -1, no cell is selected
+    await_code_in_cell = -1
 
 
 class OCAMLSTD:
@@ -338,14 +352,22 @@ class OCAMLSTD:
         self.readout = None
 
     def read_stdout(self):
-        while not GLOBALS.exit_program:
-            msg = p.stdout.readline()
-            print("stdout: ", msg.decode())
+        try:
+            while not GLOBALS.exit_program:
+                msg = p.stdout.readline()
+                logging.info("stdout: "+msg.decode().strip())
+                code = msg.decode().strip()
+                if GLOBALS.await_code_in_cell != -1:
+                    GLOBALS.Cells[GLOBALS.await_code_in_cell].code_in(code)
+        except Exception:
+            logging.error("Fatal error in main loop", exc_info=True)
+
+
 
     def read_stderro(self):
         while not GLOBALS.exit_program:
             msg = p.stderr.readline()
-            print("stderr: ", msg.decode())
+            logging.info("stderr: "+msg.decode().strip())
 
     def start(self):
         self.readout = threading.Thread(target=self.read_stdout)
@@ -358,6 +380,12 @@ class OCAMLSTD:
         self.readout.join()
         self.readerr.join()
 
+    @classmethod
+    def send(cls, msg):
+        p.stdin.flush()
+        p.stdin.write((msg + "\n").encode())
+        p.stdin.flush()
+
 
 if __name__ == "__main__":
     if OPTIONS.mouse_active:
@@ -369,6 +397,9 @@ if __name__ == "__main__":
 
     while not GLOBALS.exit_program:  # Draw
         if GLOBALS.screen_need_to_be_refresh:
+            if GLOBALS.refresh_dt > 0:
+                time.sleep(GLOBALS.refresh_dt)
+                GLOBALS.refresh_dt = 0
             Draw.draw_screen()
             GLOBALS.screen_need_to_be_refresh = False
         pass

@@ -8,3 +8,6 @@ __MACOSX/*
 .idea/*
 *.pyc
 
+
+.DS_Store
+debug.log
